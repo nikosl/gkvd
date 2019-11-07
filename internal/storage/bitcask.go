@@ -29,26 +29,55 @@ import (
 	// 	"bytes"
 	// 	"encoding/binary"
 	// 	"hash/crc32"
+	"encoding/binary"
 	"sync"
 
 	"github.com/gofrs/flock"
 )
 
+const (
+	headerSize      = 16
+	crcOffset       = 0
+	timestampOffset = crcOffset + 4
+	kszOffset       = timestampOffset + 4
+	vszOffset       = kszOffset + 4
+	entryOffset     = vszOffset + 4
+)
+
 type entry struct {
-	Key   string
-	Value entryValue
-}
-
-type entryValue struct {
-	tombstone bool
-	val       string
-}
-
-type entryHeader struct {
 	crc       uint32
-	timestamp int32
+	timestamp uint32
 	ksz       uint32
 	vsz       uint32
+	key       []byte
+	value     []byte
+}
+
+func encode(buff []byte, e *entry) (int64, []byte, error) {
+	binary.BigEndian.PutUint32(buff[crcOffset:timestampOffset], e.crc)
+	binary.BigEndian.PutUint32(buff[timestampOffset:kszOffset], e.timestamp)
+	binary.BigEndian.PutUint32(buff[kszOffset:vszOffset], e.ksz)
+	binary.BigEndian.PutUint32(buff[vszOffset:entryOffset], e.vsz)
+	valueOffset := entryOffset + e.ksz
+
+	copy(e.key, buff[entryOffset:valueOffset])
+	copy(e.value, buff[valueOffset:valueOffset+e.vsz])
+	// buff = append(buff, e.key...)
+	// buff = append(buff, e.value...)
+	return int64(headerSize + e.ksz + e.vsz), buff, nil
+}
+
+func decode(buff []byte) (*entry, error) {
+	e := &entry{}
+	e.crc = binary.BigEndian.Uint32(buff[:timestampOffset])
+	e.timestamp = binary.BigEndian.Uint32(buff[timestampOffset:kszOffset])
+	e.ksz = binary.BigEndian.Uint32(buff[kszOffset:vszOffset])
+	e.vsz = binary.BigEndian.Uint32(buff[vszOffset:entryOffset])
+
+	valueOffset := entryOffset + e.ksz
+	copy(buff[entryOffset:valueOffset], e.key[:])
+	copy(buff[valueOffset:valueOffset+e.vsz], e.value[:])
+	return e, nil
 }
 
 type keyDirEntry struct {
@@ -69,6 +98,7 @@ type Bitcask struct {
 	mu sync.RWMutex
 	*flock.Flock
 
+	directory  string
 	activeFile dataFile
 	keyDir     map[string]keyDirEntry
 }
