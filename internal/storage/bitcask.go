@@ -58,12 +58,12 @@ func encode(buff []byte, e *entry) (int64, []byte, error) {
 	binary.BigEndian.PutUint32(buff[timestampOffset:kszOffset], e.timestamp)
 	binary.BigEndian.PutUint32(buff[kszOffset:vszOffset], e.ksz)
 	binary.BigEndian.PutUint32(buff[vszOffset:entryOffset], e.vsz)
-	valueOffset := entryOffset + e.ksz
 
-	copy(e.key, buff[entryOffset:valueOffset])
-	copy(e.value, buff[valueOffset:valueOffset+e.vsz])
 	// buff = append(buff, e.key...)
 	// buff = append(buff, e.value...)
+	valueOffset := entryOffset + e.ksz
+	copy(buff[entryOffset:valueOffset], e.key[:])
+	copy(buff[valueOffset:valueOffset+e.vsz], e.value[:])
 	return int64(headerSize + e.ksz + e.vsz), buff, nil
 }
 
@@ -73,10 +73,10 @@ func decode(buff []byte) (*entry, error) {
 	e.timestamp = binary.BigEndian.Uint32(buff[timestampOffset:kszOffset])
 	e.ksz = binary.BigEndian.Uint32(buff[kszOffset:vszOffset])
 	e.vsz = binary.BigEndian.Uint32(buff[vszOffset:entryOffset])
-
 	valueOffset := entryOffset + e.ksz
-	copy(buff[entryOffset:valueOffset], e.key[:])
-	copy(buff[valueOffset:valueOffset+e.vsz], e.value[:])
+
+	copy(e.key, buff[entryOffset:valueOffset])
+	copy(e.value, buff[valueOffset:valueOffset+e.vsz])
 	return e, nil
 }
 
