@@ -1,3 +1,4 @@
+// Package bitcask api
 // bitcask:open(DirectoryName, Opts) Open a new or existing Bitcask datastore with additional options.
 // → BitCaskHandle | {error, any()} Valid options include read write (if this process is going to be a
 // 	writer and not just a reader) and sync on put (if this writer would
@@ -24,35 +25,50 @@
 // 	→ ok (if any) to disk.
 package bitcask
 
-// import (
-// 	"bytes"
-// 	"encoding/binary"
-// 	"hash/crc32"
-// )
+import (
+	// 	"bytes"
+	// 	"encoding/binary"
+	// 	"hash/crc32"
+	"sync"
 
-const (
-	stringType = iota
-	numType
+	"github.com/gofrs/flock"
 )
 
-type Entry struct {
+type entry struct {
 	Key   string
-	Value EntryValue
+	Value entryValue
 }
 
-type EntryValue struct {
-	Tombstone bool
-	Type      int8
-	Val       interface{}
+type entryValue struct {
+	tombstone bool
+	val       string
 }
 
-type EntryHeader struct {
-	CRC       uint32
-	Timestamp int32
-	Ksz       uint32
-	Vsz       uint32
+type entryHeader struct {
+	crc       uint32
+	timestamp int32
+	ksz       uint32
+	vsz       uint32
 }
 
+type keyDirEntry struct {
+	fileID    string
+	valueSz   uint32
+	valuePos  int64
+	timestamp int32
+}
+
+type dataFile struct {
+	name   string
+	id     int
+	offset int64
+}
+
+// Bitcask Log-Structured Hash Table
 type Bitcask struct {
-	activeFile File
+	mu sync.RWMutex
+	*flock.Flock
+
+	activeFile dataFile
+	keyDir     map[string]keyDirEntry
 }
