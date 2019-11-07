@@ -29,20 +29,14 @@ import (
 	// 	"bytes"
 	// 	"encoding/binary"
 	// 	"hash/crc32"
+	"bytes"
 	"encoding/binary"
 	"sync"
 
 	"github.com/gofrs/flock"
 )
 
-const (
-	headerSize      = 16
-	crcOffset       = 0
-	timestampOffset = crcOffset + 4
-	kszOffset       = timestampOffset + 4
-	vszOffset       = kszOffset + 4
-	entryOffset     = vszOffset + 4
-)
+const headerSize = 16
 
 type entry struct {
 	crc       uint32
@@ -53,30 +47,27 @@ type entry struct {
 	value     []byte
 }
 
-func encode(buff []byte, e *entry) (int64, []byte, error) {
-	binary.BigEndian.PutUint32(buff[crcOffset:timestampOffset], e.crc)
-	binary.BigEndian.PutUint32(buff[timestampOffset:kszOffset], e.timestamp)
-	binary.BigEndian.PutUint32(buff[kszOffset:vszOffset], e.ksz)
-	binary.BigEndian.PutUint32(buff[vszOffset:entryOffset], e.vsz)
-
-	valueOffset := entryOffset + e.ksz
-	copy(buff[entryOffset:valueOffset], e.key)
-	copy(buff[valueOffset:valueOffset+e.vsz], e.value)
-	return int64(headerSize + e.ksz + e.vsz), buff, nil
+func encode(buff *bytes.Buffer, e *entry) (int, error) {
+	binary.Write(buff, binary.BigEndian, e.crc)
+	binary.Write(buff, binary.BigEndian, e.timestamp)
+	binary.Write(buff, binary.BigEndian, e.ksz)
+	binary.Write(buff, binary.BigEndian, e.vsz)
+	binary.Write(buff, binary.BigEndian, e.key)
+	binary.Write(buff, binary.BigEndian, e.value)
+	return buff.Len(), nil
 }
 
-func decode(buff []byte) (*entry, error) {
+func decode(buff *bytes.Buffer) (*entry, error) {
 	e := &entry{}
-	e.crc = binary.BigEndian.Uint32(buff[:timestampOffset])
-	e.timestamp = binary.BigEndian.Uint32(buff[timestampOffset:kszOffset])
-	e.ksz = binary.BigEndian.Uint32(buff[kszOffset:vszOffset])
-	e.vsz = binary.BigEndian.Uint32(buff[vszOffset:entryOffset])
-	valueOffset := entryOffset + e.ksz
+	binary.Read(buff, binary.BigEndian, &e.crc)
+	binary.Read(buff, binary.BigEndian, &e.timestamp)
+	binary.Read(buff, binary.BigEndian, &e.ksz)
+	binary.Read(buff, binary.BigEndian, &e.vsz)
 
 	e.key = make([]byte, e.ksz)
 	e.value = make([]byte, e.vsz)
-	copy(e.key, buff[entryOffset:valueOffset])
-	copy(e.value, buff[valueOffset:valueOffset+e.vsz])
+	binary.Read(buff, binary.BigEndian, e.key[:])
+	binary.Read(buff, binary.BigEndian, e.value[:])
 	return e, nil
 }
 

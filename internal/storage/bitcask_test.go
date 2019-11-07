@@ -1,29 +1,30 @@
 package bitcask
 
 import (
+	"bytes"
 	"encoding/hex"
 	"testing"
 )
 
 func TestEntryDataFormat(t *testing.T) {
-	vs := uint32(len("12"))
+	vs := uint32(len("1γγ2"))
 	e := entry{
 		1234,
 		1234,
-		vs,
+		2,
 		vs,
 		[]byte("12"),
-		[]byte("12"),
+		[]byte("1γγ2"),
 	}
-	buff := make([]byte, 0, 2048)
-	s, _, err := encode(buff, &e)
+	var buff bytes.Buffer
+	s, err := encode(&buff, &e)
 	if err != nil {
 		t.Error("Non expected error")
 	}
-	if s != int64(headerSize+e.ksz+e.vsz) {
-		t.Errorf("expected %d but got %d, data: %s", headerSize, s, hex.EncodeToString(buff))
+	if s != int(headerSize+e.ksz+e.vsz) {
+		t.Errorf("expected %d but got %d, data: %s", headerSize, s, hex.EncodeToString(buff.Bytes()))
 	}
-	e2, _ := decode(buff)
+	e2, _ := decode(&buff)
 
 	r := e.crc == e2.crc &&
 		e.timestamp == e2.timestamp &&
@@ -32,7 +33,7 @@ func TestEntryDataFormat(t *testing.T) {
 		string(e.key) == string(e2.key) &&
 		string(e.value) == string(e2.value)
 	if !r {
-		t.Errorf("expected %v but got %v, data: %s", e, e2, hex.EncodeToString(buff))
+		t.Errorf("expected %v but got %v, data: %s", e, e2, hex.EncodeToString(buff.Bytes()))
 	}
-	t.Logf("data: %s", hex.EncodeToString(buff))
+	t.Logf("data: %s", hex.EncodeToString(buff.Bytes()))
 }
