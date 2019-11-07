@@ -16,14 +16,14 @@ func TestEntryDataFormat(t *testing.T) {
 		[]byte("12"),
 	}
 	buff := make([]byte, 0, 2048)
-	s, b, err := encode(buff, &e)
+	s, _, err := encode(buff, &e)
 	if err != nil {
 		t.Error("Non expected error")
 	}
 	if s != int64(headerSize+e.ksz+e.vsz) {
 		t.Errorf("expected %d but got %d, data: %s", headerSize, s, hex.EncodeToString(buff))
 	}
-	e2, _ := decode(b)
+	e2, _ := decode(buff)
 
 	r := e.crc == e2.crc &&
 		e.timestamp == e2.timestamp &&
