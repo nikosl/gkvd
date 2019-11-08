@@ -88,8 +88,8 @@ type dataFileIter struct {
 	curr  int
 }
 
-func (df *dataFileIter) HasNext() bool
-func (df *dataFileIter) Next() *entry
+// func (df *dataFileIter) HasNext() bool
+// func (df *dataFileIter) Next() *entry
 
 type dataFile struct {
 	name   string
@@ -172,16 +172,10 @@ func (db *Bitcask) Put(key, value string) error {
 		key:       []byte(key),
 		value:     []byte(value),
 	}
-	buffer := db.bufferPool.Get().(*bytes.Buffer)
-	encode(buffer, &e)
-	if s, _ := db.activeFile.w.Stat(); s.Size() >= threshold {
-		db.activeFile.w.Close()
-		db.activeFile, _ = newDataFile(db.directory)
-	}
-	l, _ := db.activeFile.w.Write(buffer.Bytes())
-	db.activeFile.offset = db.activeFile.offset + int64(l)
+	db.log(&e)
 
 	db.mu.Lock()
+	defer db.mu.Unlock()
 	if _, ok := db.dataFiles[db.activeFile.id]; !ok {
 		db.dataFiles[db.activeFile.id] = db.activeFile
 	}
@@ -191,11 +185,20 @@ func (db *Bitcask) Put(key, value string) error {
 		valuePos:  db.activeFile.offset - int64(valueSz),
 		timestamp: e.timestamp,
 	}
-	db.mu.Unlock()
+	return nil
+}
 
+func (db *Bitcask) log(e *entry) {
+	buffer := db.bufferPool.Get().(*bytes.Buffer)
+	encode(buffer, e)
+	if s, _ := db.activeFile.w.Stat(); s.Size() >= threshold {
+		db.activeFile.w.Close()
+		db.activeFile, _ = newDataFile(db.directory)
+	}
+	l, _ := db.activeFile.w.Write(buffer.Bytes())
+	db.activeFile.offset = db.activeFile.offset + int64(l)
 	buffer.Reset()
 	db.bufferPool.Put(buffer)
-	return nil
 }
 
 // Sync writes changes to disk
@@ -216,6 +219,25 @@ func (db *Bitcask) Get(key string) (string, string, error) {
 		return key, string(val), nil
 	}
 	return key, "", nil
+}
+
+// Delete key
+func (db *Bitcask) Delete(key string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if _, ok := db.keyDir[key]; !ok {
+		return nil
+	}
+	tombstone := entry{
+		timestamp: uint32(time.Now().Unix()),
+		ksz:       uint32(len(key)),
+		vsz:       0,
+		key:       []byte(key),
+		value:     []byte{},
+	}
+	db.log(&tombstone)
+	delete(db.keyDir, key)
+	return nil
 }
 
 // Close the database

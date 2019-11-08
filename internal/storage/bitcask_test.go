@@ -57,3 +57,28 @@ func TestPutEntryDataFormat(t *testing.T) {
 	}
 	t.Logf("data: %v", db.keyDir)
 }
+
+func TestDeleteEntryDataFormat(t *testing.T) {
+	key := "ab"
+	expectedvalue := "abcnull"
+	db, err := Open("/tmp/bckdata")
+	if err != nil {
+		t.Error("Non expected error")
+	}
+	db.Put("12", "1234")
+	err = db.Put(key, expectedvalue)
+	if err != nil {
+		t.Errorf("error %v data %v", err, db.keyDir)
+	}
+	db.Sync()
+	k, v, e := db.Get(key)
+	if e != nil || (k != key || v != expectedvalue) {
+		t.Errorf("error %v key %v value %v data %v", e, k, v, db.keyDir)
+	}
+	db.Delete(key)
+	k, v, e = db.Get(key)
+	if e != nil || (k != key || v != "") {
+		t.Errorf("error %v key %v value %v data %v", e, k, v, db.keyDir)
+	}
+	t.Logf("data: %v", db.keyDir)
+}
