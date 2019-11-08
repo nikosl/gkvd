@@ -26,17 +26,20 @@
 package bitcask
 
 import (
-	// 	"bytes"
-	// 	"encoding/binary"
-	// 	"hash/crc32"
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/gofrs/flock"
 )
 
 const headerSize = 16
+const threshold = 8192
 
 type entry struct {
 	crc       uint32
@@ -72,24 +75,156 @@ func decode(buff *bytes.Buffer) (*entry, error) {
 }
 
 type keyDirEntry struct {
-	fileID    string
+	fileID    int64
 	valueSz   uint32
 	valuePos  int64
-	timestamp int32
+	timestamp uint32
 }
+
+type dataFileIter struct {
+	begin int
+	end   int
+	len   int
+	curr  int
+}
+
+func (df *dataFileIter) HasNext() bool
+func (df *dataFileIter) Next() *entry
 
 type dataFile struct {
 	name   string
-	id     int
+	id     int64
 	offset int64
+	w      *os.File
+	r      *os.File
 }
 
 // Bitcask Log-Structured Hash Table
 type Bitcask struct {
-	mu sync.RWMutex
-	*flock.Flock
+	mu       sync.RWMutex
+	fileLock *flock.Flock
 
 	directory  string
-	activeFile dataFile
+	activeFile *dataFile
 	keyDir     map[string]keyDirEntry
+	bufferPool sync.Pool
+	dataFiles  map[int64]*dataFile
+}
+
+type config struct {
+	threshold int
+}
+
+// Open a new or existing Bitcask datastore
+func Open(path string) (*Bitcask, error) {
+	if _, err := os.Stat(path); !os.IsExist(err) {
+		os.MkdirAll(path, 0755)
+	}
+
+	db := &Bitcask{
+		directory: path,
+		fileLock:  flock.New(filepath.Join(path, ".lock")),
+		keyDir:    make(map[string]keyDirEntry),
+		dataFiles: make(map[int64]*dataFile),
+		bufferPool: sync.Pool{
+			New: func() interface{} {
+				return new(bytes.Buffer)
+			},
+		},
+	}
+	locked, err := db.fileLock.TryLock()
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
+		return nil, errors.New("Database is locked")
+	}
+
+	db.activeFile, _ = newDataFile(path)
+	return db, nil
+}
+
+func newDataFile(path string) (*dataFile, error) {
+	t := time.Now().UTC()
+	fid := t.Unix()
+	fp := fmt.Sprintf("%s/%d.binlog", path, fid)
+	w, err := os.OpenFile(fp, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0755)
+	if err != nil {
+		return nil, err
+	}
+	r, _ := os.Open(fp)
+	return &dataFile{
+		name:   fp,
+		id:     fid,
+		offset: 0,
+		w:      w,
+		r:      r,
+	}, nil
+}
+
+// Put adds a key value to the database
+func (db *Bitcask) Put(key, value string) error {
+	valueSz := uint32(len(value))
+	e := entry{
+		timestamp: uint32(time.Now().Unix()),
+		ksz:       uint32(len(key)),
+		vsz:       valueSz,
+		key:       []byte(key),
+		value:     []byte(value),
+	}
+	buffer := db.bufferPool.Get().(*bytes.Buffer)
+	encode(buffer, &e)
+	if s, _ := db.activeFile.w.Stat(); s.Size() >= threshold {
+		db.activeFile.w.Close()
+		db.activeFile, _ = newDataFile(db.directory)
+	}
+	l, _ := db.activeFile.w.Write(buffer.Bytes())
+	db.activeFile.offset = db.activeFile.offset + int64(l)
+
+	db.mu.Lock()
+	if _, ok := db.dataFiles[db.activeFile.id]; !ok {
+		db.dataFiles[db.activeFile.id] = db.activeFile
+	}
+	db.keyDir[key] = keyDirEntry{
+		fileID:    db.activeFile.id,
+		valueSz:   uint32(len(value)),
+		valuePos:  db.activeFile.offset - int64(valueSz),
+		timestamp: e.timestamp,
+	}
+	db.mu.Unlock()
+
+	buffer.Reset()
+	db.bufferPool.Put(buffer)
+	return nil
+}
+
+// Sync writes changes to disk
+func (db *Bitcask) Sync() {
+	db.activeFile.w.Sync()
+}
+
+// Get returns a key value from the database
+func (db *Bitcask) Get(key string) (string, string, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	kv, ok := db.keyDir[key]
+	if ok {
+		val := make([]byte, kv.valueSz)
+		df := db.dataFiles[kv.fileID]
+		df.r.ReadAt(val, kv.valuePos)
+		return key, string(val), nil
+	}
+	return key, "", nil
+}
+
+// Close the database
+func (db *Bitcask) Close() {
+	db.activeFile.w.Close()
+	for _, v := range db.dataFiles {
+		v.r.Close()
+	}
+	if db.fileLock.Locked() {
+		db.fileLock.Unlock()
+	}
 }
