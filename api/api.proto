@@ -1,0 +1,18 @@
+syntax = "proto3";
+package api;
+
+service Kv {
+  rpc Get(Request) returns (Response) {}
+  rpc Put(Request) returns (Response) {}
+  rpc Delete(Request) returns (Response) {}
+  rpc Keys(Request) returns (Response) {}
+  rpc HasKey(Request) returns (Response) {}
+}
+
+message Request { string key = 1; }
+
+message Response {
+  string key = 1;
+  string value = 2;
+  string err = 3;
+}
