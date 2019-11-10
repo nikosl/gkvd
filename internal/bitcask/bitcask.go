@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ import (
 const headerSize = 16
 
 const (
-	threshold          = 8192
+	threshold          = 8 * 1_000_000
 	maxKsz             = 1024
 	maxVsz             = 2048
 	fragmentation      = 20
@@ -364,43 +365,72 @@ func (db *Bitcask) Merge() error {
 	}
 	defer db.mergeLock.Unlock()
 
-	// tmp, err := ioutil.TempDir("", "bitcask_dir_merge")
-	// if err != nil {
-	// 	return err
-	// }
+	tmp, err := ioutil.TempDir("", "bitcask_dir_merge")
+	if err != nil {
+		return err
+	}
 
-	// logFiles, err := ioutil.ReadDir(db.directory)
-	// if err != nil {
-	// 	return err
-	// }
+	logFiles, err := ioutil.ReadDir(db.directory)
+	if err != nil {
+		return err
+	}
 
-	// old := []string{}
-	// for _, fi := range logFiles {
-	// 	if fi.Name() == db.activeFile.name {
-	// 		continue
-	// 	}
-	// 	old = append(old, fi.Name())
-	// }
+	old := []string{}
+	db.mu.Lock()
+	cur := db.activeFile.name
+	aid := db.activeFile.id
+	fkey := make([]int64, 0)
+	for k := range db.dataFiles {
+		if k == aid {
+			continue
+		}
+		fkey = append(fkey, k)
+	}
+	for _, fi := range logFiles {
+		if fi.Name() == cur {
+			continue
+		}
+		old = append(old, fi.Name())
+	}
 
-	// db.mu.RLock()
-	// for k, v := range db.keyDir {
+	dbmerge, err := Open(tmp)
+	for k, v := range db.keyDir {
+		if v.fileID == aid {
+			continue
+		}
+		_, dv, _ := db.Get(k)
+		dbmerge.Put(k, dv)
+		db.dataFiles[v.fileID] = dbmerge.dataFiles[v.fileID]
+	}
+	fi, _ := ioutil.ReadDir(tmp)
+	for _, f := range fi {
+		dstp := db.directory + "/" + f.Name()
+		srcp := "/tmp/bitcask_dir_merge/" + f.Name()
+		dst, err := os.Create(dstp)
+		if err != nil {
+			return err
+		}
+		defer dst.Close()
 
-	// 	//	datafile newDataFile(tmp)
-	// }
-	// 1. create to new file
-	// buffer := db.bufferPool.Get().(*bytes.Buffer)
-	// encode(buffer, e)
-	// if s, _ := db.activeFile.w.Stat(); s.Size() >= threshold {
-	// 	db.activeFile.w.Close()
-	// 	db.activeFile, _ = newDataFile(db.directory)
-	// }
-	// l, _ := db.activeFile.w.Write(buffer.Bytes())
-	// db.activeFile.offset = db.activeFile.offset + int64(l)
-	// buffer.Reset()
-	// db.bufferPool.Put(buffer)
-	// 2. rename old
-	// 3. copy new sync
-	// 4. remove old
+		src, _ := os.Open(srcp)
+		_, err = io.Copy(dst, src)
+		src.Close()
+		dst.Close()
+		if err == nil {
+			os.Remove(srcp)
+		}
+	}
+	for k, v := range dbmerge.keyDir {
+		db.keyDir[k] = v
+	}
+	for _, k := range fkey {
+		delete(db.dataFiles, k)
+	}
+	db.mu.Unlock()
+	for _, r := range old {
+		os.Remove(r)
+	}
+	dbmerge.Close()
 	return nil
 }
 
@@ -503,11 +533,13 @@ func newDataFile(path string) (*dataFile, error) {
 func (db *Bitcask) log(e *entry) {
 	buffer := db.bufferPool.Get().(*bytes.Buffer)
 	encode(buffer, e)
+	db.mu.Lock()
 	if s, _ := db.activeFile.w.Stat(); s.Size() >= threshold {
 		db.activeFile.w.Close()
 		db.activeFile.hw.Close()
 		db.activeFile, _ = newDataFile(db.directory)
 	}
+	db.mu.Unlock()
 	l, _ := db.activeFile.w.Write(buffer.Bytes())
 	db.activeFile.offset = db.activeFile.offset + int64(l)
 	buffer.Reset()

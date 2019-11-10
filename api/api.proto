@@ -1,18 +1,23 @@
 syntax = "proto3";
 package api;
+import "google/protobuf/empty.proto";
 
 service Kv {
   rpc Get(Request) returns (Response) {}
   rpc Put(Request) returns (Response) {}
   rpc Delete(Request) returns (Response) {}
-  rpc Keys(Request) returns (Response) {}
+  rpc Keys(google.protobuf.Empty) returns (Response) {}
   rpc HasKey(Request) returns (Response) {}
 }
 
-message Request { string key = 1; }
+message Request {
+  string key = 1;
+  string value = 2;
+}
 
 message Response {
   string key = 1;
   string value = 2;
   string err = 3;
+  repeated string keys = 4;
 }

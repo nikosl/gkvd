@@ -1,9 +1,9 @@
-SERVER_OUT := "server.bin"
-CLIENT_OUT := "client.bin"
+SERVER_OUT := "kvd.bin"
+CLIENT_OUT := "kv.bin"
 API_OUT := "api/api.pb.go"
 PKG := "github.com/nikosl/gkvd"
-SERVER_PKG_BUILD := "${PKG}/server"
-CLIENT_PKG_BUILD := "${PKG}/client"
+SERVER_PKG_BUILD := "${PKG}/cmd/kvd"
+CLIENT_PKG_BUILD := "${PKG}/cmd/kv"
 PKG_LIST := $(shell go list ${PKG}/... | grep -v /vendor/)
 
 .PHONY: all api build_server build_client
